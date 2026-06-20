@@ -26,8 +26,11 @@ The expected minimum amount of time each Sprint for each category is as follows:
 
 |Date      |Category |Description                                              |Total Minutes|
 |----------|:-------:|---------------------------------------------------------|:-----------:|
-|  |      |   |       |
-|  |      |   |       |
+| 6/8/26   | IM      | Did Module Plan and researched diffrent game engines    | 2:00        |
+| 6/9/26   | TM/MTG  | Sprint meetings, etc. Workd on API calls                | 1:30        |
+| 6/11/26  | TM/MTG  | Standup, team presentation. Collabed on API with Harim  | 1:45        |
+| 6/16/26  | TM/MTG  | Standup. Wrote code to color-code dynamic content       | 1:30        |
+|  |       |                |         |
 
 
 _Note: Add more rows as needed._
