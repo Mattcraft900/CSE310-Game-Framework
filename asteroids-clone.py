@@ -12,8 +12,8 @@ SCREEN_TITLE = "Asteroids Clone - CSE310"
 SCALING = 1.0
 
 # Arbitrary constants, these probably need tweaking later
-PLAYER_ACCEL = 1.0
-BOOST_ACCEL = 2.0
+PLAYER_ACCEL = 0.5
+BOOST_ACCEL = 1.0
 MAX_SPEED = 15.0
 AST_SPEED = 5.0
 AST_BURST_SPEED = 5.0
@@ -59,6 +59,8 @@ class AsteroidsGame(arcade.Window):
         self.left_pressed = False
         self.down_pressed = False
         self.right_pressed = False
+        self.space_pressed = False
+        self.thruster_state = 'coast'
         self.thrust = PLAYER_ACCEL
         self.player = None
 
@@ -75,6 +77,15 @@ class AsteroidsGame(arcade.Window):
         self.player.center_x = self.width / 2
 
         self.all_sprites.append(self.player)
+
+        # Thruster/booster sprites
+        self.thruster = arcade.Sprite("images/thrusters_001.png", SCALING)
+        self.thrust_frames = [arcade.load_texture("images/thrusters_001.png"), arcade.load_texture("images/thrusters_002.png")]
+        self.boost_frames = [arcade.load_texture("images/boost_001.png"), arcade.load_texture("images/boost_002.png")]
+        self.thrust_frame_index = 0
+        self.thrust_timer = 0
+
+        self.all_sprites.append(self.thruster)
 
 
     def on_key_press(self, symbol: int, modifiers: int):
@@ -100,7 +111,7 @@ class AsteroidsGame(arcade.Window):
         
         # Boost key
         elif symbol == arcade.key.SPACE:
-            self.thrust = BOOST_ACCEL
+            self.space_pressed = True
 
     def on_key_release(self, symbol: int, modifiers: int):
         """Handle key releases."""
@@ -114,8 +125,10 @@ class AsteroidsGame(arcade.Window):
             self.left_pressed = False
         elif symbol in (arcade.key.D, arcade.key.RIGHT):
             self.right_pressed = False
+        
+        # Boost key
         elif symbol == arcade.key.SPACE:
-            self.thrust = PLAYER_ACCEL
+            self.space_pressed = False
     
 
     def on_update(self, delta_time: float):
@@ -126,29 +139,33 @@ class AsteroidsGame(arcade.Window):
             return
 
         # ----- Calculate player movement ----- #
-        # Carryover from previous inputs (slowed by friction)
-        self.player.change_x *= FRICTION
-        self.player.change_y *= FRICTION
-
         # Acceleration based on key states
         # (Moving diagonally happens at the same rate as orthogonally)
         dx, dy = 0, 0
-
         # Using add/subtract instead of assignment to handle when opposite directions are both pressed
         if self.up_pressed: dy += 1
         if self.down_pressed: dy -= 1
         if self.right_pressed: dx += 1
         if self.left_pressed: dx -= 1
-
         # Normalize diagonal movement speed
         length = math.hypot(dx, dy)
         if length > 0:
             dx /= length
             dy /= length
+        # Apply boost acceleration if space bar is held
+        if self.space_pressed:
+            dx *= BOOST_ACCEL
+            dy *= BOOST_ACCEL
+        else:
+            dx *= PLAYER_ACCEL
+            dy *= PLAYER_ACCEL
 
         # Apply the calculated speeds
-        self.player.change_x += self.thrust * dx
-        self.player.change_y += self.thrust * dy
+        self.player.change_x += dx
+        self.player.change_y += dy
+        # Apply friction
+        self.player.change_x *= FRICTION
+        self.player.change_y *= FRICTION
 
         # Enable screen wrap
         if self.player.top < 0:
@@ -160,10 +177,47 @@ class AsteroidsGame(arcade.Window):
         elif self.player.left > self.width:
             self.player.right = 0
 
-        # Update sprite rotation
+        # Update ship sprite rotation
         if dx != 0 or dy != 0:
             angle_rad = math.atan2(dx, dy)
             self.player.angle = math.degrees(angle_rad)
+            if self.space_pressed:
+                self.thruster_state = 'boost'
+            else:
+                self.thruster_state = 'thrust'
+        else:
+            self.thruster_state = 'coast'
+
+        # Thruster/booster sprites
+        ANIM_SPEED = 6
+        self.thruster.visible = True
+        if self.thruster_state in ('thrust', 'boost'):
+            self.thrust_timer += 1
+            if self.thrust_timer >= ANIM_SPEED:
+                self.thrust_timer = 0
+                self.thrust_frame_index = (
+                    self.thrust_frame_index + 1
+                ) % len(self.thrust_frames)
+
+        offset_distance = self.player.height * SCALING / 2.0
+        rad = math.radians(self.player.angle)
+
+        math_angle = math.atan2(dy, dx)
+        rad = math_angle  # keep math angle for vectors
+
+        offset_x = -math.cos(rad) * offset_distance
+        offset_y = -math.sin(rad) * offset_distance
+
+        self.thruster.center_x = self.player.center_x + offset_x
+        self.thruster.center_y = self.player.center_y + offset_y
+        self.thruster.angle = self.player.angle
+
+        if self.thruster_state == 'thrust':
+            self.thruster.texture = self.thrust_frames[self.thrust_frame_index]
+        elif self.thruster_state == 'boost':
+            self.thruster.texture = self.boost_frames[self.thrust_frame_index]
+        else:
+            self.thruster.visible = False
 
         # Collision check
         if self.player.collides_with_list(self.asteroid_list):
