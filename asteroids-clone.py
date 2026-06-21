@@ -5,32 +5,53 @@ import arcade
 import random
 import math
 
-# Constants
+# ------ Constants ------ #
+# Meta
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 SCREEN_TITLE = "Asteroids Clone - CSE310"
 SCALING = 1.0
-
-# Arbitrary constants, these probably need tweaking later
+# Player movement
 PLAYER_ACCEL = 0.5
 BOOST_ACCEL = 1.0
 MAX_SPEED = 15.0
+FRICTION = 0.95
+# Asteroid speeds
 AST_MAX_SPEED = 5.0
 AST_MIN_SPEED = 1.0
 BURST_MAX_SPEED = 5.0
 BURST_MIN_SPEED = 0.1
-FRICTION = 0.99
+BURST_ANGLE_VARIANCE = 30
+# Bullets/firing
 BULLET_SPEED = 10.0
-
+BULLET_LIFETIME = 2.0
+FIRE_COOLDOWN = 0.50
+EXPLOSION_LENGTH = 0.1
+# Difficulty settings
 BASE_DIFFICULTY = 1.0
 DIFFICULTY_MOD = 0.05
-
-# Magic numbers
+# Common magic numbers (to reduce calculation load)
 SQRT_TWO = math.sqrt(2)
 
 
 class Asteroid(arcade.Sprite):
     """Base class for asteroid objects"""
+    def __init__(self, path_or_texture = None, scale: float = 1, center_x: float = 0, center_y: float = 0, angle: float = 0, 
+                 level: str = 'large', quadrant=None, parent_quadrant=None):
+        self.level = level
+        self.quadrant = quadrant  # This asteroid's own positional quadrant
+
+        if level == 'large':
+            image = "images/asteroid_lg.png"
+        elif level == 'medium':
+            image = f"images/asteroid_md_{quadrant}.png"
+        elif level == 'small':
+            # e.g. asteroid_sm_TL_BR.png — parent quadrant first, then own
+            image = f"images/asteroid_sm_{parent_quadrant}_{quadrant}.png"
+        else:
+            raise ValueError(f"Unknown asteroid level: '{level}'")
+
+        super().__init__(image, SCALING)
 
     # Override update() to check for offscreen positions
     def update(self, delta_time: float = 1/60):
@@ -47,6 +68,56 @@ class Asteroid(arcade.Sprite):
             self.right = 0
 
 
+class Bullet(arcade.Sprite):
+    """Base class for asteroid objects"""
+    # Constructor override
+    def __init__(self, path_or_texture = None, scale: float = 1):
+            super().__init__(path_or_texture, scale)
+            self.lifetime = BULLET_LIFETIME
+
+    # Override update() to check for offscreen positions
+    def update(self, delta_time: float = 1/60):
+        # Call the parent function
+        super().update()
+        # enable screenwrap for bullets
+        if self.top < 0:
+            self.bottom = SCREEN_HEIGHT
+        elif self.bottom > SCREEN_HEIGHT:
+            self.top = 0
+        if self.right < 0:
+            self.left = SCREEN_WIDTH
+        elif self.left > SCREEN_WIDTH:
+            self.right = 0
+
+        # Remove bullets whoe lifetime is up
+        self.lifetime -= delta_time
+        if self.lifetime <= 0:
+            self.remove_from_sprite_lists()
+
+
+class Explosion(arcade.Sprite):
+    """Class for Explosion objects (appear upon asteroid destruction)"""
+    def __init__(self, level, x, y):
+        if level == 'large':
+            image = "images/explosion_lg.png"
+        elif level == 'medium':
+            image = "images/explosion_md.png"
+        elif level == 'small':
+            image = "images/explosion_sm.png"
+        else:
+            raise ValueError(f"Unknown explosion level: '{level}'")
+
+        super().__init__(image, SCALING)
+        self.center_x = x
+        self.center_y = y
+        self.lifetime = EXPLOSION_LENGTH
+
+    def update(self, delta_time: float = 1/60):
+        self.lifetime -= delta_time
+        if self.lifetime <= 0:
+            self.remove_from_sprite_lists()
+
+
 class AsteroidsGame(arcade.Window):
     """
     Basic recreation of the arcade game Asteroids.
@@ -56,7 +127,7 @@ class AsteroidsGame(arcade.Window):
     Player can move anywhere, and wraps around the screen at the borders.
     The player can accelerate in the eight compass directions using WASD/arrow keys, up to a max speed cap.
     The player can fire bullets from the front of their ship.
-    Asteroids of medium or large size which are hit by bullets split into 2-4 smaller asteroids.
+    Asteroids of medium or large level which are hit by bullets split into 2-4 smaller asteroids.
     Each asteroid destroyed grants a set number of points.
     Difficulty increases over time.
     Collisions end the game.
@@ -82,8 +153,10 @@ class AsteroidsGame(arcade.Window):
         self.down_pressed = False
         self.right_pressed = False
         self.boost_pressed = False
+        self.fire_pressed = False
         self.thruster_state = 'coast'
         self.thrust = PLAYER_ACCEL
+        self.fire_timer = 0.0
         self.player = None
 
         self.setup()
@@ -94,7 +167,6 @@ class AsteroidsGame(arcade.Window):
         # Add the player
         self.player = arcade.Sprite("images/ship.png", SCALING)
 
-        print(self.player.height)
         self.player.center_y = self.height / 2
         self.player.center_x = self.width / 2
 
@@ -113,7 +185,7 @@ class AsteroidsGame(arcade.Window):
         self.difficulty = BASE_DIFFICULTY
 
         # Schedule regular asteroid spawns
-        arcade.schedule(self.create_asteroid, 5.0)
+        arcade.schedule(self.create_asteroid, 6.0)
 
 
     def create_asteroid(self, delta_time: float):
@@ -156,16 +228,86 @@ class AsteroidsGame(arcade.Window):
         self.all_sprites.append(asteroid)
 
 
+    def destroy_asteroid(self, asteroid):
+        """Handle asteroid behavior upon destruction."""
+        # Spawn explosion at the asteroid's location
+        explosion = Explosion(asteroid.level, asteroid.center_x, asteroid.center_y)
+        self.all_sprites.append(explosion)
+
+        # Spawn children if not small
+        if asteroid.level in ('large', 'medium'):
+            child_level = 'medium' if asteroid.level == 'large' else 'small'
+            num_children = random.randint(2, 4)
+            quadrants = random.sample(['TL', 'TR', 'BL', 'BR'], num_children)
+            quadrant_angles = { 'TL': 135, 'TR': 45, 'BL': 225, 'BR': 315, }
+
+            for quadrant in quadrants:
+                # Offset child spawn position into its quadrant
+                offset = asteroid.width / 4
+                ox = offset * (1 if 'R' in quadrant else -1)
+                oy = offset * (1 if 'T' in quadrant else -1)
+
+                if asteroid.level == 'large':
+                    child = Asteroid(level=child_level, quadrant=quadrant)
+                else:
+                    child = Asteroid(level=child_level, quadrant=quadrant, parent_quadrant=asteroid.quadrant)
+
+                child.center_x = asteroid.center_x + ox
+                child.center_y = asteroid.center_y + oy
+                child.angle = random.randint(0, 359)
+
+                # Random outward velocity
+                speed = random.uniform(BURST_MIN_SPEED, BURST_MAX_SPEED)
+                center_angle = quadrant_angles[quadrant]
+                angle_rad = math.radians(random.uniform(center_angle - BURST_ANGLE_VARIANCE, center_angle + BURST_ANGLE_VARIANCE))
+                child.change_x = math.cos(angle_rad) * speed
+                child.change_y = math.sin(angle_rad) * speed
+
+                self.asteroid_list.append(child)
+                self.all_sprites.append(child)
+
+        asteroid.remove_from_sprite_lists()
+
+
+    def fire_bullet(self, delta_time: float = 1/60):
+        """Fire a bullet from the front of the ship."""
+
+        # If less than a second has passed since the last bullet was fired, don't fire.
+        # if delta_time < 1.0:
+        #     return
+
+        # Create the new bullet object
+        bullet = Bullet('images/bullet.png', SCALING)
+
+        # Calculate bullet's position
+        offset = self.player.height / 2 * SCALING
+        angle_rad = math.radians(self.player.angle)
+        offset_x = math.sin(angle_rad) * offset
+        offset_y = math.cos(angle_rad) * offset
+        bullet.center_x = self.player.center_x + offset_x
+        bullet.center_y = self.player.center_y + offset_y
+        # Set the bullet's angle to be the same as the ship's
+        bullet.angle = self.player.angle
+
+        # Calculate the bullet's speed
+        speed = BULLET_SPEED + math.hypot(self.player.change_x, self.player.change_y)
+        bullet.change_x = math.sin(angle_rad) * speed
+        bullet.change_y = math.cos(angle_rad) * speed
+
+        self.bullet_list.append(bullet)
+        self.all_sprites.append(bullet)
+
+
 
     def on_key_press(self, symbol: int, modifiers: int):
         """Handle key presses."""
 
         # Quit button
-        if symbol == arcade.key.Q:
+        if symbol in (arcade.key.Q, arcade.key.ESCAPE):
             self.close()
 
         # Pause buttons
-        elif symbol in (arcade.key.P, arcade.key.ESCAPE):
+        elif symbol in (arcade.key.P, arcade.key.E):
             self.paused = not self.paused
 
         # Directional keys
@@ -179,12 +321,12 @@ class AsteroidsGame(arcade.Window):
             self.right_pressed = True
         
         # Boost key
-        elif symbol == arcade.key.MOD_SHIFT:
+        elif symbol in (arcade.key.LSHIFT, arcade.key.RSHIFT):
             self.boost_pressed = True
 
         # Fire key
         elif symbol == arcade.key.SPACE:
-            self.fire_bullet()
+            self.fire_pressed = True
 
 
     def on_key_release(self, symbol: int, modifiers: int):
@@ -201,8 +343,12 @@ class AsteroidsGame(arcade.Window):
             self.right_pressed = False
         
         # Boost key
-        elif symbol == arcade.key.MOD_SHIFT:
+        elif symbol in (arcade.key.LSHIFT, arcade.key.RSHIFT):
             self.boost_pressed = False
+
+        # Fire key
+        elif symbol == arcade.key.SPACE:
+            self.fire_pressed = False
     
 
     def on_update(self, delta_time: float):
@@ -262,7 +408,7 @@ class AsteroidsGame(arcade.Window):
         else:
             self.thruster_state = 'coast'
 
-        # Thruster/booster sprites
+        # ------ Thruster/booster sprites ------ #
         ANIM_SPEED = 6
         self.thruster.visible = True
         if self.thruster_state in ('thrust', 'boost'):
@@ -297,9 +443,22 @@ class AsteroidsGame(arcade.Window):
         if self.player.collides_with_list(self.asteroid_list):
             print("Game Over!")
             self.close()
+
+        # Handle bullet-firing, including cooldown
+        self.fire_timer -= delta_time
+        if self.fire_pressed and self.fire_timer <= 0:
+            self.fire_bullet()
+            self.fire_timer = FIRE_COOLDOWN
+
+        for bullet in self.bullet_list:
+            hit_list = bullet.collides_with_list(self.asteroid_list)
+            if hit_list:
+                bullet.remove_from_sprite_lists()
+                for asteroid in hit_list:
+                    self.destroy_asteroid(asteroid)
         
-        # Update sprites
-        self.all_sprites.update()
+        # Update all sprites
+        self.all_sprites.update(delta_time)
     
 
     def on_draw(self):
