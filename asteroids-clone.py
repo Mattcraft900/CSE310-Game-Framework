@@ -7,29 +7,36 @@ import math
 
 # ------ Constants ------ #
 # Meta
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
+SCREEN_WIDTH = 1200
+SCREEN_HEIGHT = 900
 SCREEN_TITLE = "Asteroids Clone - CSE310"
 SCALING = 1.0
 # Player movement
 PLAYER_ACCEL = 0.5
 BOOST_ACCEL = 1.0
 MAX_SPEED = 15.0
-FRICTION = 0.95
-# Asteroid speeds
+FRICTION = 0.975
+# Asteroid behavior
 AST_MAX_SPEED = 5.0
 AST_MIN_SPEED = 1.0
 BURST_MAX_SPEED = 5.0
 BURST_MIN_SPEED = 0.1
 BURST_ANGLE_VARIANCE = 30
+EXPLOSION_LENGTH = 0.1
+# Asteroid spawn cooldowns
+SPAWN_TIME_LARGE = 10.0
+SPAWN_TIME_MEDIUM = 6.0
+SPAWN_TIME_SMALL = 3.0
+SPAWN_TIME_MIN_MULT = 0.5   # minimum fraction of initial value that difficulty can scale to
 # Bullets/firing
 BULLET_SPEED = 10.0
+BULLET_WRAP = True
 BULLET_LIFETIME = 2.0
 FIRE_COOLDOWN = 0.50
-EXPLOSION_LENGTH = 0.1
 # Difficulty settings
 BASE_DIFFICULTY = 1.0
 DIFFICULTY_MOD = 0.05
+SPEED_SCALE_FACTOR = 0.5    # controls how fast asteroid speed grows with difficulty (logarithmic)
 # Common magic numbers (to reduce calculation load)
 SQRT_TWO = math.sqrt(2)
 
@@ -39,6 +46,10 @@ class Asteroid(arcade.Sprite):
     def __init__(self, path_or_texture = None, scale: float = 1, center_x: float = 0, center_y: float = 0, angle: float = 0, 
                  level: str = 'large', quadrant=None, parent_quadrant=None):
         self.level = level
+        quadrants = ['TL', 'TR', 'BL', 'BR']
+        # Fall back to a random quadrant if not specified
+        if quadrant is None:
+            quadrant = random.choice(quadrants)
         self.quadrant = quadrant  # This asteroid's own positional quadrant
 
         if level == 'large':
@@ -47,6 +58,8 @@ class Asteroid(arcade.Sprite):
             image = f"images/asteroid_md_{quadrant}.png"
         elif level == 'small':
             # e.g. asteroid_sm_TL_BR.png — parent quadrant first, then own
+            if parent_quadrant is None:
+                parent_quadrant = random.choice(quadrants)
             image = f"images/asteroid_sm_{parent_quadrant}_{quadrant}.png"
         else:
             raise ValueError(f"Unknown asteroid level: '{level}'")
@@ -79,17 +92,21 @@ class Bullet(arcade.Sprite):
     def update(self, delta_time: float = 1/60):
         # Call the parent function
         super().update()
-        # enable screenwrap for bullets
-        if self.top < 0:
-            self.bottom = SCREEN_HEIGHT
-        elif self.bottom > SCREEN_HEIGHT:
-            self.top = 0
-        if self.right < 0:
-            self.left = SCREEN_WIDTH
-        elif self.left > SCREEN_WIDTH:
-            self.right = 0
+        # Screenwrap for bullets, if enabled
+        if BULLET_WRAP:
+            if self.top < 0:
+                self.bottom = SCREEN_HEIGHT
+            elif self.bottom > SCREEN_HEIGHT:
+                self.top = 0
+            if self.right < 0:
+                self.left = SCREEN_WIDTH
+            elif self.left > SCREEN_WIDTH:
+                self.right = 0
+        elif self.top < 0 or self.bottom > SCREEN_HEIGHT or self.right < 0 or self.left > SCREEN_WIDTH:
+            self.remove_from_sprite_lists()
+            return
 
-        # Remove bullets whoe lifetime is up
+        # Remove bullets whose lifetime is up
         self.lifetime -= delta_time
         if self.lifetime <= 0:
             self.remove_from_sprite_lists()
@@ -188,17 +205,74 @@ class AsteroidsGame(arcade.Window):
         arcade.schedule(self.create_asteroid, 6.0)
 
 
-    def create_asteroid(self, delta_time: float):
-        """Create an asteroid."""
+    def pick_asteroid_level(self):
+        """Choose a spawn level based on current difficulty.
 
-        # Create the new asteroid
-        asteroid = Asteroid("images/asteroid_sm_TL_BR.png", SCALING)
+        At difficulty 1.0 the ratio is 50% small / 50% medium / 0% large.
+        Large asteroids start appearing around difficulty 5, and by difficulty ~20
+        the pool is almost entirely large. Uses a smooth threshold approach so the
+        shift feels gradual rather than sudden.
+        """
+        # medium_weight rises from 0 → 1 between difficulty 1 and ~10
+        medium_weight = min(1.0, (self.difficulty - 1.0) / 9.0)
+        # large_weight rises from 0 → 1 between difficulty 5 and ~20
+        large_weight  = max(0.0, min(1.0, (self.difficulty - 5.0) / 15.0))
+
+        # Build a weighted pool: start with equal small/medium, then blend in large
+        small_w  = 1.0 - large_weight          # shrinks as large grows
+        medium_w = medium_weight * (1.0 - large_weight)
+        # large_w is just large_weight
+
+        total = small_w + medium_w + large_weight
+        roll = random.uniform(0, total)
+
+        if roll < small_w:
+            return 'small'
+        elif roll < small_w + medium_w:
+            return 'medium'
+        else:
+            return 'large'
+
+
+    def spawn_timer_for(self, level):
+        """Return the current spawn interval for a given asteroid level.
+        
+        Difficulty shrinks timers down to SPAWN_TIME_MIN_MULT of their base value.
+        Uses a simple linear scale clamped at the minimum.
+        """
+        base = { 'small': SPAWN_TIME_SMALL, 'medium': SPAWN_TIME_MEDIUM, 'large': SPAWN_TIME_LARGE }[level]
+        # difficulty 1 → full timer; higher difficulty → shorter, floored at MIN_MULT
+        scale = max(SPAWN_TIME_MIN_MULT, 1.0 - (self.difficulty - 1.0) * DIFFICULTY_MOD)
+        return base * scale
+
+
+    def scaled_max_speed(self):
+        """Return AST_MAX_SPEED scaled logarithmically by difficulty.
+        
+        Grows noticeably early on, then tapers off. Approaches ~2-2.5× base
+        only after very long play sessions.
+        """
+        return AST_MAX_SPEED * (1.0 + SPEED_SCALE_FACTOR * math.log(self.difficulty))
+
+
+    def create_asteroid(self, delta_time: float):
+        """Create an asteroid, then reschedule the next spawn based on its level."""
+
+        # Unschedule the current repeating call so we can set a new interval
+        arcade.unschedule(self.create_asteroid)
+
+        # Pick a level based on current difficulty
+        level = self.pick_asteroid_level()
+
+        # Create the asteroid (quadrant(s) chosen randomly inside __init__ if not supplied)
+        asteroid = Asteroid(level=level)
         
         # 25% chance of each side (t,b,l,r)
         # random area within each side
         # random velocity inward, random angle within 45 degrees of perpendicular
         side = random.randint(1, 4)
-        speed = random.random() * (AST_MAX_SPEED - AST_MIN_SPEED) + AST_MIN_SPEED
+        cur_max_speed = self.scaled_max_speed()
+        speed = random.uniform(AST_MIN_SPEED, cur_max_speed)
         entry_angle = random.randint(-45, 45)
 
         if side == 1: # bottom
@@ -227,6 +301,10 @@ class AsteroidsGame(arcade.Window):
         self.asteroid_list.append(asteroid)
         self.all_sprites.append(asteroid)
 
+        # Reschedule next spawn using the timer for the level we just spawned
+        next_interval = self.spawn_timer_for(level)
+        arcade.schedule(self.create_asteroid, next_interval)
+
 
     def destroy_asteroid(self, asteroid):
         """Handle asteroid behavior upon destruction."""
@@ -234,12 +312,17 @@ class AsteroidsGame(arcade.Window):
         explosion = Explosion(asteroid.level, asteroid.center_x, asteroid.center_y)
         self.all_sprites.append(explosion)
 
+        # Increase difficulty with each kill
+        self.difficulty += DIFFICULTY_MOD
+
         # Spawn children if not small
         if asteroid.level in ('large', 'medium'):
             child_level = 'medium' if asteroid.level == 'large' else 'small'
             num_children = random.randint(2, 4)
             quadrants = random.sample(['TL', 'TR', 'BL', 'BR'], num_children)
             quadrant_angles = { 'TL': 135, 'TR': 45, 'BL': 225, 'BR': 315, }
+
+            cur_burst_max = BURST_MAX_SPEED * (1.0 + SPEED_SCALE_FACTOR * math.log(self.difficulty))
 
             for quadrant in quadrants:
                 # Offset child spawn position into its quadrant
@@ -256,8 +339,8 @@ class AsteroidsGame(arcade.Window):
                 child.center_y = asteroid.center_y + oy
                 child.angle = random.randint(0, 359)
 
-                # Random outward velocity
-                speed = random.uniform(BURST_MIN_SPEED, BURST_MAX_SPEED)
+                # Random outward velocity, scaled by difficulty
+                speed = random.uniform(BURST_MIN_SPEED, cur_burst_max)
                 center_angle = quadrant_angles[quadrant]
                 angle_rad = math.radians(random.uniform(center_angle - BURST_ANGLE_VARIANCE, center_angle + BURST_ANGLE_VARIANCE))
                 child.change_x = math.cos(angle_rad) * speed

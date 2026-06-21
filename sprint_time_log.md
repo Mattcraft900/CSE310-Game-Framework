@@ -24,14 +24,14 @@ The expected minimum amount of time each Sprint for each category is as follows:
 
 ## Time Log
 
-|Date      |Category |Description                                              |Total Minutes|
-|----------|:-------:|---------------------------------------------------------|:-----------:|
-| 6/8/26   | IM      | Did Module Plan and researched diffrent game engines    | 2:00        |
-| 6/9/26   | TM/MTG  | Sprint meetings, etc. Workd on API calls                | 1:30        |
-| 6/11/26  | TM/MTG  | Standup, team presentation. Collabed on API with Harim  | 1:45        |
-| 6/16/26  | TM/MTG  | Standup. Wrote code to color-code dynamic content       | 1:30        |
-|  |       |                |         |
-
+|Date      |Category |Description                                               |Total Minutes|
+|----------|:-------:|----------------------------------------------------------|:-----------:|
+| 6/8/26   | IM      | Did Module Plan and researched diffrent game engines     | 2:00        |
+| 6/9/26   | TM/MTG  | Sprint meetings, etc. Workd on API calls                 | 1:30        |
+| 6/11/26  | MTG     | Standup, team presentation, etc.                         | 1:00        |
+| 6/16/26  | TM/MTG  | Standup. Collabed on API with Harim.                     | 1:30        |
+| 6/19/26  | TM      | Wrote code to color-code dynamic content                 | 1:00        |
+| 6/20/26  | IM      | ...Finished the rest of the individual module (lol oops) | 8:00        |
 
 _Note: Add more rows as needed._
 
@@ -39,7 +39,7 @@ _Note: Add more rows as needed._
 
 |Categroy                       |Total Time (Hours:Minutes)|
 |-------------------------------|:------------------------:|
-|IM - Individual Module         | 9:00                     |
-|TP - Team Project              | 5:30                     |
+|IM - Individual Module         | 10:00                    |
+|TP - Team Project              | 4:00                     |
 |MTG - Class Meetings           | 4:00                     |
-|**TOTAL**                      | 18:30                    |
+|**TOTAL**                      | 18:00                    |
