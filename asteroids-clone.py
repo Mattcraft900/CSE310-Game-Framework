@@ -156,10 +156,6 @@ class AsteroidsGame(arcade.Window):
         self.all_sprites.append(asteroid)
 
 
-    def fire_bullet(self, delta_time: float):
-        """Fire a bullet from the front of the ship."""
-
-
 
     def on_key_press(self, symbol: int, modifiers: int):
         """Handle key presses."""
