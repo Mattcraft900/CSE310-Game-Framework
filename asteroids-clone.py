@@ -15,14 +15,36 @@ SCALING = 1.0
 PLAYER_ACCEL = 0.5
 BOOST_ACCEL = 1.0
 MAX_SPEED = 15.0
-AST_SPEED = 5.0
-AST_BURST_SPEED = 5.0
+AST_MAX_SPEED = 5.0
+AST_MIN_SPEED = 1.0
+BURST_MAX_SPEED = 5.0
+BURST_MIN_SPEED = 0.1
 FRICTION = 0.99
+BULLET_SPEED = 10.0
 
 BASE_DIFFICULTY = 1.0
+DIFFICULTY_MOD = 0.05
 
 # Magic numbers
 SQRT_TWO = math.sqrt(2)
+
+
+class Asteroid(arcade.Sprite):
+    """Base class for asteroid objects"""
+
+    # Override update() to check for offscreen positions
+    def update(self, delta_time: float = 1/60):
+        # Call the parent function
+        super().update()
+        # enable screenwrap for asteroids
+        if self.top < 0:
+            self.bottom = SCREEN_HEIGHT
+        elif self.bottom > SCREEN_HEIGHT:
+            self.top = 0
+        if self.right < 0:
+            self.left = SCREEN_WIDTH
+        elif self.left > SCREEN_WIDTH:
+            self.right = 0
 
 
 class AsteroidsGame(arcade.Window):
@@ -59,7 +81,7 @@ class AsteroidsGame(arcade.Window):
         self.left_pressed = False
         self.down_pressed = False
         self.right_pressed = False
-        self.space_pressed = False
+        self.boost_pressed = False
         self.thruster_state = 'coast'
         self.thrust = PLAYER_ACCEL
         self.player = None
@@ -87,6 +109,57 @@ class AsteroidsGame(arcade.Window):
 
         self.all_sprites.append(self.thruster)
 
+        # Set the baseline difficulty
+        self.difficulty = BASE_DIFFICULTY
+
+        # Schedule regular asteroid spawns
+        arcade.schedule(self.create_asteroid, 5.0)
+
+
+    def create_asteroid(self, delta_time: float):
+        """Create an asteroid."""
+
+        # Create the new asteroid
+        asteroid = Asteroid("images/asteroid_sm_TL_BR.png", SCALING)
+        
+        # 25% chance of each side (t,b,l,r)
+        # random area within each side
+        # random velocity inward, random angle within 45 degrees of perpendicular
+        side = random.randint(1, 4)
+        speed = random.random() * (AST_MAX_SPEED - AST_MIN_SPEED) + AST_MIN_SPEED
+        entry_angle = random.randint(-45, 45)
+
+        if side == 1: # bottom
+            asteroid.top = 0
+            asteroid.center_x = random.randint(0, self.width)
+            asteroid.angle = 0 + entry_angle
+        elif side == 2: # left
+            asteroid.right = 0
+            asteroid.center_y = random.randint(0, self.height)
+            asteroid.angle = 90 + entry_angle
+        elif side == 3: # top
+            asteroid.bottom = self.height
+            asteroid.center_x = random.randint(0, self.width)
+            asteroid.angle = 180 + entry_angle
+        elif side == 4: # right
+            asteroid.left = self.width
+            asteroid.center_y = random.randint(0, self.height)
+            asteroid.angle = 270 + entry_angle
+        
+        # Calculate x & y dimensions of the entry velocity
+        entry_radians = math.radians(asteroid.angle)
+        asteroid.change_x = math.sin(entry_radians) * speed
+        asteroid.change_y = math.cos(entry_radians) * speed
+        
+        # Add the asteroid to the relevant sprite lists
+        self.asteroid_list.append(asteroid)
+        self.all_sprites.append(asteroid)
+
+
+    def fire_bullet(self, delta_time: float):
+        """Fire a bullet from the front of the ship."""
+
+
 
     def on_key_press(self, symbol: int, modifiers: int):
         """Handle key presses."""
@@ -110,8 +183,13 @@ class AsteroidsGame(arcade.Window):
             self.right_pressed = True
         
         # Boost key
+        elif symbol == arcade.key.MOD_SHIFT:
+            self.boost_pressed = True
+
+        # Fire key
         elif symbol == arcade.key.SPACE:
-            self.space_pressed = True
+            self.fire_bullet()
+
 
     def on_key_release(self, symbol: int, modifiers: int):
         """Handle key releases."""
@@ -127,8 +205,8 @@ class AsteroidsGame(arcade.Window):
             self.right_pressed = False
         
         # Boost key
-        elif symbol == arcade.key.SPACE:
-            self.space_pressed = False
+        elif symbol == arcade.key.MOD_SHIFT:
+            self.boost_pressed = False
     
 
     def on_update(self, delta_time: float):
@@ -153,7 +231,7 @@ class AsteroidsGame(arcade.Window):
             dx /= length
             dy /= length
         # Apply boost acceleration if space bar is held
-        if self.space_pressed:
+        if self.boost_pressed:
             dx *= BOOST_ACCEL
             dy *= BOOST_ACCEL
         else:
@@ -181,7 +259,7 @@ class AsteroidsGame(arcade.Window):
         if dx != 0 or dy != 0:
             angle_rad = math.atan2(dx, dy)
             self.player.angle = math.degrees(angle_rad)
-            if self.space_pressed:
+            if self.boost_pressed:
                 self.thruster_state = 'boost'
             else:
                 self.thruster_state = 'thrust'
@@ -238,7 +316,7 @@ class AsteroidsGame(arcade.Window):
     def on_close(self):
         """Clean up scheduled events before closing."""
 
-        # arcade.unschedule(self.add_enemy)
+        arcade.unschedule(self.create_asteroid)
 
         super().on_close()
 
